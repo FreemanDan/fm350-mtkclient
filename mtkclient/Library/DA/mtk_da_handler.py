@@ -553,17 +553,43 @@ class DaHandler(metaclass=LogBase):
                 res = self.mtk.daloader.detect_partition(partition, parttype)
                 if res[0]:
                     rpartition = res[1]
-                    if self.mtk.daloader.writeflash(addr=rpartition.sector * self.config.pagesize,
-                                                    length=rpartition.sectors * self.config.pagesize,
-                                                    filename=partfilename,
-                                                    parttype=parttype):
-                        print(
-                            f"Wrote {partfilename} to sector {str(rpartition.sector)} with " +
-                            f"sector count {str(rpartition.sectors)}.")
+                    is_nand = self.mtk.daloader.daconfig.storage.flashtype == "nand"
+                    if is_nand:
+                        protected = {
+                            "preloader", "para",
+                            "proinfo", "nvcfg", "nvdata", "protect1", "protect2",
+                            "seccfg", "boot_para", "nvram", "cfginfo",
+                            "mddata_bak", "mdcode_bak", "user_data", "pmt"
+                        }
+                        if rpartition.name.lower() in protected:
+                            self.error(
+                                f'Refusing named NAND write to protected partition "{rpartition.name}".'
+                            )
+                            continue
+                        filesize = os.stat(partfilename).st_size
+                        partsize = rpartition.sectors * self.config.pagesize
+                        if filesize > partsize:
+                            self.error(
+                                f'Image {partfilename} ({filesize} bytes) exceeds partition '
+                                f'{rpartition.name} ({partsize} bytes).'
+                            )
+                            continue
+                        write_ok = self.mtk.daloader.writeflash_by_name(
+                            partname=rpartition.name,
+                            filename=partfilename,
+                            display=True
+                        )
                     else:
-                        print(
-                            f"Failed to write {partfilename} to sector {str(rpartition.sector)} with " +
-                            f"sector count {str(rpartition.sectors)}.")
+                        write_ok = self.mtk.daloader.writeflash(
+                            addr=rpartition.sector * self.config.pagesize,
+                            length=rpartition.sectors * self.config.pagesize,
+                            filename=partfilename,
+                            parttype=parttype
+                        )
+                    if write_ok:
+                        print(f'Wrote {partfilename} to partition "{rpartition.name}".')
+                    else:
+                        print(f'Failed to write {partfilename} to partition "{rpartition.name}".')
                 else:
                     self.error(f"Error: Couldn't detect partition: {partition}\nAvailable partitions:")
                     for rpartition in res[1]:
