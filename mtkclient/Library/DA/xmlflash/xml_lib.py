@@ -880,9 +880,18 @@ class DAXML(metaclass=LogBase):
         return None
 
     def change_usb_speed(self):
+        skip_usb_speed = os.environ.get("MTKCLIENT_SKIP_USB_SPEED", "").strip().lower()
+        if skip_usb_speed in ("1", "true", "yes", "on"):
+            self.warning("Skipping DA USB speed negotiation (MTKCLIENT_SKIP_USB_SPEED is set)")
+            return True
+
+        self.info("Requesting higher DA USB speed")
         resp = self.send_command(self.cmd.cmd_can_higher_usb_speed())
         if not resp:
+            self.warning("DA USB speed negotiation failed")
             return False
+        self.info("DA USB speed negotiation accepted")
+        return True
 
     def read_partition_table(self) -> tuple:
         self.send_command(self.cmd.cmd_read_partition_table(), noack=True)
