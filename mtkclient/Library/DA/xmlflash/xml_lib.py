@@ -878,7 +878,9 @@ class DAXML(metaclass=LogBase):
         return data
 
     def get_sys_property(self, key: str = "DA.SLA", length: int = 0x200000):
-        self.send_command(self.cmd.cmd_get_sys_property(key=key, length=length), noack=True)
+        if not self.send_command(self.cmd.cmd_get_sys_property(key=key, length=length), noack=True):
+            self.warning(f"GET-SYS-PROPERTY {key} is unsupported or failed")
+            return False
         cmd, result = self.get_command_result()
         if type(result) is not UpFile:
             return False
