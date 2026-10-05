@@ -352,18 +352,28 @@ class DaHandler(metaclass=LogBase):
                             readlength = length
                         if display:
                             self.info(f'Dumping partition "{rpartition.name}"')
-                        if self.mtk.daloader.readflash(addr=(rpartition.sector * self.config.pagesize) + offset,
-                                                       length=readlength,
-                                                       filename=partfilename, parttype=parttype, display=display):
+                        is_nand = self.mtk.daloader.daconfig.storage.flashtype == "nand"
+                        if is_nand and offset == 0 and length is None:
+                            read_ok = self.mtk.daloader.readflash_by_name(
+                                partname=rpartition.name,
+                                filename=partfilename,
+                                display=display
+                            )
+                        else:
+                            read_ok = self.mtk.daloader.readflash(
+                                addr=(rpartition.sector * self.config.pagesize) + offset,
+                                length=readlength,
+                                filename=partfilename,
+                                parttype=parttype,
+                                display=display
+                            )
+                        if read_ok:
                             if display:
-                                self.info(f"Dumped sector {str(rpartition.sector)} with sector count " +
-                                          f"{str(rpartition.sectors)} as {partfilename}.")
+                                self.info(f'Dumped partition "{rpartition.name}" as {partfilename}.')
                             count_dump += 1
                         else:
                             if display:
-                                self.info(f"Failed to dump sector {str(rpartition.sector)} with sector count " +
-                                          f"{str(rpartition.sectors)} as {partfilename}.")
-                            count_dump += 1
+                                self.info(f'Failed to dump partition "{rpartition.name}" as {partfilename}.')
                     else:
                         if display:
                             self.error(f"Error: Couldn't detect partition: {partition}\nAvailable partitions:")
