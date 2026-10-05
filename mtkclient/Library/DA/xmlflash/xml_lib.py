@@ -909,7 +909,9 @@ class DAXML(metaclass=LogBase):
         return True
 
     def read_partition_table(self) -> tuple:
-        self.send_command(self.cmd.cmd_read_partition_table(), noack=True)
+        if not self.send_command(self.cmd.cmd_read_partition_table(), noack=True):
+            self.warning("READ-PARTITION-TABLE is unsupported or failed")
+            return b"", None
         cmd, result = self.get_command_result()
         if type(result) is not UpFile:
             return b"", None
@@ -921,10 +923,12 @@ class DAXML(metaclass=LogBase):
             tcmd, tresult = self.get_command_result()
 
             class PartitionTable:
-                def __init__(self, name, start, size):
+                def __init__(self, name, sector, sectors):
                     self.name = name
-                    self.start = start
-                    self.size = size
+                    self.sector = sector
+                    self.sectors = sectors
+                    self.start = sector
+                    self.size = sectors
 
             if tresult == "START":
                 parttbl = []
@@ -934,7 +938,7 @@ class DAXML(metaclass=LogBase):
                     if name != '':
                         start = get_field(item, "start")
                         rsize = get_field(item, "size")
-                        if size == "":
+                        if not rsize:
                             continue
                         rsize = int(rsize, 16)
                         start = int(start, 16)
