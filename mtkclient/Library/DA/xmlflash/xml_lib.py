@@ -838,9 +838,22 @@ class DAXML(metaclass=LogBase):
                     self.daconfig.storage.nand.spare_size = int(get_field(data, "spare_size"), 16)
                     self.daconfig.storage.nand.total_size = int(get_field(data, "total_size"), 16)
                     self.daconfig.storage.nand.cid = get_field(data, "id")
-                    self.daconfig.storage.nand.page_parity_size = int(get_field(data, "page_parity_size"), 16)
+                    page_parity_size = get_field(data, "page_parity_size")
+                    if page_parity_size:
+                        self.daconfig.storage.nand.page_parity_size = int(page_parity_size, 16)
+                    else:
+                        self.warning("NAND page_parity_size not reported by DA; defaulting to 0")
+                        self.daconfig.storage.nand.page_parity_size = 0
                     self.daconfig.storage.nand.sub_type = get_field(data, "sub_type")
                     self.daconfig.storage.set_flash_size()
+                    self.info(
+                        "NAND geometry: "
+                        f"block={hex(self.daconfig.storage.nand.block_size)}, "
+                        f"page={hex(self.daconfig.storage.nand.page_size)}, "
+                        f"spare={hex(self.daconfig.storage.nand.spare_size)}, "
+                        f"total={hex(self.daconfig.storage.nand.total_size)}, "
+                        f"parity={hex(self.daconfig.storage.nand.page_parity_size)}"
+                    )
                 else:
                     self.error(f"Unknown storage type: {storagetype}")
                     return False
