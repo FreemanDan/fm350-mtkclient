@@ -471,6 +471,16 @@ class XMLCmd(metaclass=LogBase):
         cmd = self.create_cmd("READ-PARTITION", content)
         return cmd
 
+    def cmd_write_partition_by_name(self, partition: str, mem_length: int,
+                                    mem_offset: int = 0x8000000):
+        content = {
+            "arg": [
+                f"<partition>{partition}</partition>",
+                f"<source_file>MEM://{hex(mem_offset)}:{hex(mem_length)}</source_file>"
+            ]
+        }
+        return self.create_cmd("WRITE-PARTITION", content)
+
     def cmd_read_flash(self, partition: str = "EMMC-USER", offset: int = 0, length: int = 0x100000):
         content = {
             "arg": [
