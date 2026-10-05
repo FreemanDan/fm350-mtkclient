@@ -1253,7 +1253,14 @@ class DaHandler(metaclass=LogBase):
         elif cmd == "printgpt":
             data, guid_gpt = mtk.daloader.get_gpt()
             if not guid_gpt:
-                self.error('Error reading gpt, please read whole flash using "mtk rf flash.bin".')
+                self.error('Error reading partition table, please read whole flash using "mtk rf flash.bin".')
+            elif isinstance(guid_gpt, list):
+                self.info("Partition table (PMT):")
+                for partition in guid_gpt:
+                    if hasattr(partition, "name"):
+                        start = getattr(partition, "start", getattr(partition, "sector", 0))
+                        size = getattr(partition, "size", getattr(partition, "sectors", 0))
+                        self.info(f"  {partition.name:<20} start=0x{start:08x}  size=0x{size:08x}")
             else:
                 guid_gpt.print()
         elif cmd == "r":
