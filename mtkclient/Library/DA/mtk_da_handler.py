@@ -1263,7 +1263,7 @@ class DaHandler(metaclass=LogBase):
                         page_size = self.config.pagesize
                         self.info(
                             f"  {partition.name:<20} "
-                            f"page=0x{start:08x} pages=0x{size:08x} "
+                            f"sector512=0x{start:08x} sectors512=0x{size:08x} "
                             f"byte_start=0x{start * page_size:08x} "
                             f"byte_size=0x{size * page_size:08x}"
                         )
