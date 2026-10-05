@@ -999,6 +999,58 @@ class DAXML(metaclass=LogBase):
             self.error("Read flash isn't supported")
             sys.exit(1)
 
+    def writeflash_by_name(self, partname: str, filename: str, display: bool = True) -> bool:
+        """Write an exact file payload to a named partition via CMD:WRITE-PARTITION."""
+        if not filename or not os.path.exists(filename):
+            self.error(f"File not found: {filename}")
+            return False
+
+        length = os.stat(filename).st_size
+        if length <= 0:
+            self.error(f"Refusing zero-length WRITE-PARTITION for {partname}")
+            return False
+
+        if not self.send_command(
+                self.cmd.cmd_write_partition_by_name(partition=partname, mem_length=length),
+                noack=True):
+            self.error(f"WRITE-PARTITION not supported or rejected for {partname}")
+            return False
+
+        result = None
+        for _ in range(8):
+            cmd, result = self.get_command_result()
+            if isinstance(result, FileSysOp):
+                if result.key == "EXISTS":
+                    self.ack_value(1)
+                elif result.key == "FILE-SIZE":
+                    self.ack_value(length)
+                else:
+                    self.error(
+                        f"WRITE-PARTITION {partname}: unhandled FileSysOp key {result.key!r}"
+                    )
+                    return False
+                continue
+            break
+
+        if not isinstance(result, DwnFile):
+            self.error(f"WRITE-PARTITION {partname}: unexpected response {result!r}")
+            return False
+
+        with open(filename, "rb") as fh:
+            data = fh.read()
+
+        if len(data) != length:
+            self.error(
+                f"WRITE-PARTITION {partname}: short local read {len(data)} != {length}"
+            )
+            return False
+
+        if not self.upload(result, data, display=display, raw=True):
+            self.error(f"WRITE-PARTITION {partname}: upload/write failed")
+            return False
+
+        return True
+
     def writeflash(self, addr, length, filename, offset=0, parttype=None, wdata=None, display=True):
         fh = None
         if filename != "":
