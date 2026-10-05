@@ -279,7 +279,12 @@ class DAloader(metaclass=LogBase):
             return [False, fpartitions]
         else:
             data, partitions = self.da.partition.read_pmt()
-            return [True, partitions]
+            if not partitions:
+                return [False, []]
+            for partition in partitions:
+                if hasattr(partition, "name") and partition.name.lower() == partitionname.lower():
+                    return [True, partition]
+            return [False, partitions]
 
     def get_partition_data(self, parttype=None):
         if self.partition_table_category() == "GPT":
@@ -291,7 +296,7 @@ class DAloader(metaclass=LogBase):
                 return guid_gpt.partentries
         else:
             data, partitions = self.da.partition.read_pmt()
-            return [True, partitions]
+            return partitions if partitions else []
 
     def get_gpt(self, parttype=None) -> tuple:
         if self.partition_table_category() == "GPT":
