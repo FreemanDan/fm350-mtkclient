@@ -219,7 +219,8 @@ class DAXML(metaclass=LogBase):
                 if tcmd == "CMD:START":
                     return False
             elif "ERR!" in result:
-                return result
+                self.error(result)
+                return False
         return False
 
     def get_response(self, raw: bool = False):
