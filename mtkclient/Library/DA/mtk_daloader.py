@@ -344,6 +344,12 @@ class DAloader(metaclass=LogBase):
         self.error("readflash_by_name not supported by current DA mode")
         return b"" if not filename else False
 
+    def writeflash_by_name(self, partname: str, filename: str, display: bool = True):
+        if hasattr(self.da, "writeflash_by_name"):
+            return self.da.writeflash_by_name(partname=partname, filename=filename, display=display)
+        self.error("writeflash_by_name not supported by current DA mode")
+        return False
+
     def get_packet_length(self):
         if self.flashmode == DAmodes.XFLASH:
             pt = self.da.get_packet_length()
