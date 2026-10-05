@@ -112,8 +112,11 @@ class DAXML(metaclass=LogBase):
     def xread(self) -> Tuple[int,int]:
         while True:
             hdr = self.usbread()
+            if not isinstance(hdr, (bytes, bytearray)):
+                self.error(f"xread: Invalid header type {type(hdr).__name__}: {hdr!r}")
+                return -1, -1
             if len(hdr) not in [12,16]:
-                self.error("xread: Wrong length")
+                self.error(f"xread: Wrong length {len(hdr)}; raw={bytes(hdr).hex()}")
                 return -1, -1
             magic = int.from_bytes(hdr[:4],'little')
             if magic != 0xFEEEEEEF:
