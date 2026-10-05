@@ -393,8 +393,9 @@ class DAloader(metaclass=LogBase):
             pg.done()
 
     def partition_table_category(self):
-        # if self.flashmode == damodes.XFLASH:
-        #    return self.xft.get_partition_table_category()
+        # NAND devices use the DA-provided PMT instead of probing for GPT/MBR.
+        if getattr(self.daconfig.storage, "flashtype", None) == "nand":
+            return "PMT"
         return "GPT"
 
     def poke(self, addr: int, data: bytes or bytearray, registers:bool=False):
