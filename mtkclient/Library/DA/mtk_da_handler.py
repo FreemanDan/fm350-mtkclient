@@ -1260,7 +1260,13 @@ class DaHandler(metaclass=LogBase):
                     if hasattr(partition, "name"):
                         start = getattr(partition, "start", getattr(partition, "sector", 0))
                         size = getattr(partition, "size", getattr(partition, "sectors", 0))
-                        self.info(f"  {partition.name:<20} start=0x{start:08x}  size=0x{size:08x}")
+                        page_size = self.config.pagesize
+                        self.info(
+                            f"  {partition.name:<20} "
+                            f"page=0x{start:08x} pages=0x{size:08x} "
+                            f"byte_start=0x{start * page_size:08x} "
+                            f"byte_size=0x{size * page_size:08x}"
+                        )
             else:
                 guid_gpt.print()
         elif cmd == "r":
