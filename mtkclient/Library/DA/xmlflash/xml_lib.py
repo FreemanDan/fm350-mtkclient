@@ -947,6 +947,32 @@ class DAXML(metaclass=LogBase):
                 return data, parttbl
         return b"", None
 
+    def readflash_by_name(self, partname: str, filename: str = "", display: bool = True):
+        """Read a named partition via CMD:READ-PARTITION without supplying a length."""
+        if not self.send_command(self.cmd.cmd_read_partition(partname), noack=True):
+            self.error(f"READ-PARTITION not supported for {partname}")
+            return b"" if not filename else False
+
+        cmd, result = self.get_command_result()
+        if type(result) is not UpFile:
+            self.error(f"READ-PARTITION {partname} returned: {result}")
+            return b"" if not filename else False
+
+        data = self.download_raw(result=result, filename=filename, display=display)
+
+        # READ-PARTITION follows the same post-download state transition as READ-FLASH.
+        scmd, sresult = self.get_command_result()
+        if sresult != "START":
+            self.warning(
+                f"READ-PARTITION {partname} completed data transfer but DA did not return CMD:START "
+                f"(cmd={scmd!r}, result={sresult!r})"
+            )
+            return b"" if not filename else False
+
+        if filename:
+            return bool(data)
+        return data
+
     def readflash(self, addr, length, filename, parttype=None, display=True) -> (bytes, bool):
         partinfo = self.daconfig.storage.get_storage(parttype, length)
         if not partinfo:
