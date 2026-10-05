@@ -55,17 +55,18 @@ def add_connection_group(parser):
     g = parser.add_argument_group("Connection & Interface")
     g.add_argument('--vid', type=str)
     g.add_argument('--pid', type=str)
-    g.add_argument('--serialport', nargs='?', const='DETECT', default=None,
+    g.add_argument('--serialport', nargs='?', const='DETECT', default=argparse.SUPPRESS,
                    help='Use serial port (can be DETECT)')
     g.add_argument('--noreconnect', action='store_true')
     g.add_argument('--stock', action='store_true', help='use stock da')
     g.add_argument('--uartloglevel', help='Set uart log level (0=Trace, 2=Normal)')
-    g.add_argument('--logchannel', help='Set log channel ("UART","USB", "BOTH")', default="UART")
+    g.add_argument('--logchannel', help='Set log channel ("UART","USB", "BOTH")',
+                   default=argparse.SUPPRESS)
     g.add_argument('--loglevel', help='Set log level (0=Trace, 2=Normal)')
     g.add_argument('--write_preloader_to_file', action='store_true', help='Dump preloader to file')
     g.add_argument('--generatekeys', action='store_true', help='Derive HW keys')
     g.add_argument('--iot', help='Use special mode for iot MT6261/2301', action="store_true",
-                           default=False)
+                           default=argparse.SUPPRESS)
     g.add_argument('--socid', action='store_true', help='Read Soc ID')
 
 def add_auth_group(parser):
@@ -95,10 +96,10 @@ def add_exploit_group(parser):
 
 def add_gpt_group(parser):
     g = parser.add_argument_group("GPT & Partition")
-    g.add_argument("--sectorsize", default='0x200', help='Set default sector size')
-    g.add_argument('--gpt-num-part-entries', default='0', help='Set GPT entry count')
-    g.add_argument('--gpt-part-entry-size', default='0', help='Set GPT entry size')
-    g.add_argument('--gpt-part-entry-start-lba', default='0', help='Set GPT entry start lba sector')
+    g.add_argument("--sectorsize", default=argparse.SUPPRESS, help='Set default sector size')
+    g.add_argument('--gpt-num-part-entries', default=argparse.SUPPRESS, help='Set GPT entry count')
+    g.add_argument('--gpt-part-entry-size', default=argparse.SUPPRESS, help='Set GPT entry size')
+    g.add_argument('--gpt-part-entry-start-lba', default=argparse.SUPPRESS, help='Set GPT entry start lba sector')
     g.add_argument('--parttype', help='Partition type (user/boot1/rpmb/lu0 etc.)')
     g.add_argument('--skip', help='Skip partitions (comma separated names)')
 
@@ -108,7 +109,8 @@ def add_gpt_group(parser):
 def create_base_parser():
     parser = argparse.ArgumentParser(
         description=INFO,
-        add_help=False
+        add_help=False,
+        argument_default=argparse.SUPPRESS
     )
     add_connection_group(parser)
     add_auth_group(parser)
@@ -329,6 +331,49 @@ def main():
     # ─── Parse & Run ─────────────────────────────────────────────────────
 
     args = parser.parse_args()
+
+    # Common options are inherited by both the root parser and each subparser.
+    # Without suppressed defaults, argparse reparses the subparser and overwrites
+    # values supplied before the command (for example --auth/--loader/--stock)
+    # with None/False. Restore defaults only after parsing so both CLI forms work.
+    common_defaults = {
+        "vid": None,
+        "pid": None,
+        "serialport": None,
+        "noreconnect": False,
+        "stock": False,
+        "uartloglevel": None,
+        "logchannel": "UART",
+        "loglevel": None,
+        "write_preloader_to_file": False,
+        "generatekeys": False,
+        "iot": False,
+        "socid": False,
+        "auth": None,
+        "cert": None,
+        "debugmode": False,
+        "loader": None,
+        "preloader": None,
+        "ptype": None,
+        "var1": None,
+        "uart_addr": None,
+        "da_addr": None,
+        "brom_addr": None,
+        "mode": None,
+        "wdt": None,
+        "skipwdt": False,
+        "crash": False,
+        "appid": None,
+        "sectorsize": "0x200",
+        "gpt_num_part_entries": "0",
+        "gpt_part_entry_size": "0",
+        "gpt_part_entry_start_lba": "0",
+        "parttype": None,
+        "skip": None,
+    }
+    for name, value in common_defaults.items():
+        if not hasattr(args, name):
+            setattr(args, name, value)
 
     if not args.cmd:
         parser.print_help()
