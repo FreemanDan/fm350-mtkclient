@@ -849,9 +849,10 @@ class DAXML(metaclass=LogBase):
                                     0x10,                                                 , 1
         """
         data = self.get_sys_property(key="DA.SLA", length=0x200000)
-        if data is None:
+        if not isinstance(data, (bytes, bytearray)):
+            self.warning(f"DA.SLA unavailable ({data!r}); treating as disabled")
             return False
-        data = data.decode('utf-8')
+        data = bytes(data).decode('utf-8', errors='replace')
         if "item key=" in data:
             tmp = data[data.find("item key=") + 8:]
             res = tmp[tmp.find(">") + 1:tmp.find("<")]
