@@ -1013,7 +1013,9 @@ class DAXML(metaclass=LogBase):
         return False
 
     def check_lifecycle(self):
-        self.send_command(self.cmd.cmd_emmc_control(function="LIFE-CYCLE-STATUS"), noack=True)
+        if not self.send_command(self.cmd.cmd_emmc_control(function="LIFE-CYCLE-STATUS"), noack=True):
+            self.warning("LIFE-CYCLE-STATUS is unsupported or failed")
+            return False
         cmd, result = self.get_command_result()
         if not isinstance(result, UpFile):
             if cmd == 'CMD:END':
