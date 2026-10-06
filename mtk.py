@@ -21,6 +21,7 @@ CMDS_HELP = {
     "ro": "Read flash starting at offset to filename",
     "fs": "Mount the device as a FUSE filesystem",
     "w": "Write partition from filename",
+    "flashupdate": "Run stock XML-DA firmware upgrade from a validated scatter package",
     "wf": "Write flash from filename",
     "wl": "Write partitions from directory path to flash",
     "wo": "Write flash starting at offset from filename",
@@ -201,6 +202,26 @@ def main():
     cmd_parsers["footer"].add_argument("filename", help="Filename to store footer")
 
     # ─── Other commands ──────────────────────────────────────────────────
+
+    cmd_flashupdate = subparsers.add_parser(
+        "flashupdate",
+        help=CMDS_HELP["flashupdate"],
+        parents=[base]
+    )
+    cmd_flashupdate.add_argument(
+        "directory",
+        help="Firmware package directory containing Scatter.xml and all download images"
+    )
+    cmd_flashupdate.add_argument(
+        "--backup-dir",
+        required=True,
+        help="Host directory used for DA protected-partition/update backup files"
+    )
+    cmd_flashupdate.add_argument(
+        "--confirm-flash-update",
+        action="store_true",
+        help="Required safety interlock for the state-changing FLASH-UPDATE command"
+    )
 
     cmd_fs = subparsers.add_parser("fs", help="Mount as FUSE filesystem")
     cmd_fs.add_argument("mountpoint")
