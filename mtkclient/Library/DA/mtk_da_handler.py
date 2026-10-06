@@ -1367,6 +1367,25 @@ class DaHandler(metaclass=LogBase):
         elif cmd == "footer":
             filename = args.filename
             self.da_footer(filename=filename)
+        elif cmd == "flashupdate":
+            if not getattr(args, "confirm_flash_update", False):
+                self.error(
+                    "Refusing FLASH-UPDATE without --confirm-flash-update."
+                )
+                return
+            firmware_dir = os.path.abspath(args.directory)
+            backup_dir = os.path.abspath(args.backup_dir)
+            self.info(f"Firmware package: {firmware_dir}")
+            self.info(f"DA backup directory: {backup_dir}")
+            if self.mtk.daloader.flash_update(
+                    firmware_dir=firmware_dir,
+                    backup_dir=backup_dir,
+                    display=True):
+                print("FLASH-UPDATE completed successfully.")
+            else:
+                self.error("FLASH-UPDATE failed.")
+                self.close()
+                raise RuntimeError("FLASH-UPDATE failed")
         elif cmd == "w":
             partitionname = args.partitionname
             filename = args.filename
