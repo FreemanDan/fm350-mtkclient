@@ -1384,8 +1384,9 @@ class DaHandler(metaclass=LogBase):
                 print("FLASH-UPDATE completed successfully.")
             else:
                 self.error("FLASH-UPDATE failed.")
-                self.close()
-                raise RuntimeError("FLASH-UPDATE failed")
+                # Do not call self.close(): it exits with status 0 and masks a
+                # failed firmware update from scripts/logging.
+                raise SystemExit(2)
         elif cmd == "w":
             partitionname = args.partitionname
             filename = args.filename
