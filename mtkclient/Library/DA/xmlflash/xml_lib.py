@@ -1132,8 +1132,9 @@ class DAXML(metaclass=LogBase):
         )
 
         if key == "EXISTS":
-            exists = bool(local_path and os.path.exists(local_path))
-            return self.ack_text("EXISTS" if exists else "NOT-EXISTS")
+            # SP Flash Tool/Penumbra semantics: make the DA request the host file
+            # instead of assuming a cached/local copy exists on its virtual FS.
+            return self.ack_text("NOT-EXISTS")
 
         if key == "FILE-SIZE":
             if not local_path or not os.path.isfile(local_path):
@@ -1151,7 +1152,7 @@ class DAXML(metaclass=LogBase):
                 )
                 return False
             os.makedirs(local_path, exist_ok=True)
-            return self.ack()
+            return self.ack_text("MKDIR")
 
         if key in ("REMOVE", "REMOVE-ALL"):
             if kind != "backup" or not local_path:
@@ -1164,10 +1165,108 @@ class DAXML(metaclass=LogBase):
                 shutil.rmtree(local_path)
             elif os.path.exists(local_path):
                 os.remove(local_path)
-            return self.ack()
+            return self.ack_text(key)
 
         self.error(f"FLASH-UPDATE unhandled FileSysOp key {key!r}")
         return False
+
+    def _flash_update_receive_file(self, result: UpFile, filename: str,
+                                   display: bool = True) -> bool:
+        """Receive one nested CMD:UPLOAD-FILE and require the exact advertised length."""
+        if not filename:
+            self.error("FLASH-UPDATE empty backup destination")
+            return False
+
+        resp = self.get_response()
+        if not resp.startswith("OK@0x"):
+            self.error(f"FLASH-UPDATE invalid upload length response: {resp!r}")
+            return False
+
+        try:
+            length = int(resp.split("@", 1)[1][2:], 16)
+        except (ValueError, IndexError):
+            self.error(f"FLASH-UPDATE invalid upload length response: {resp!r}")
+            return False
+
+        if length < 0:
+            self.error(f"FLASH-UPDATE invalid negative upload length: {length}")
+            return False
+
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        tmpname = filename + ".partial"
+        try:
+            if os.path.exists(tmpname):
+                os.remove(tmpname)
+
+            if not self.ack():
+                return False
+            if "OK" not in self.get_response():
+                self.error("FLASH-UPDATE upload length ACK rejected")
+                return False
+            if not self.ack():
+                return False
+
+            received = 0
+            pg = progress(total=length, prefix="Read:",
+                          guiprogress=self.mtk.config.guiprogress)
+            with open(tmpname, "wb") as wf:
+                while received < length:
+                    data = self.get_response_data()
+                    if not data:
+                        self.error(
+                            f"FLASH-UPDATE short upload: {received} of {length} bytes"
+                        )
+                        return False
+                    if received + len(data) > length:
+                        self.error(
+                            f"FLASH-UPDATE upload exceeds advertised length: "
+                            f"{received + len(data)} > {length}"
+                        )
+                        return False
+
+                    wf.write(data)
+                    received += len(data)
+                    if display:
+                        pg.update(len(data))
+
+                    if not self.ack():
+                        return False
+                    block_ack = self.get_response()
+                    if "OK" not in block_ack:
+                        self.error(
+                            f"FLASH-UPDATE upload block rejected at 0x{received:x}: "
+                            f"{block_ack!r}"
+                        )
+                        return False
+                    if not self.ack():
+                        return False
+
+                wf.flush()
+                os.fsync(wf.fileno())
+
+            if display:
+                pg.done()
+
+            actual = os.stat(tmpname).st_size
+            if received != length or actual != length:
+                self.error(
+                    f"FLASH-UPDATE backup length mismatch: "
+                    f"protocol={received}, file={actual}, expected={length}"
+                )
+                return False
+
+            os.replace(tmpname, filename)
+            self.info(
+                f'FLASH-UPDATE received "{result.info}" -> {filename} '
+                f'({length} bytes)'
+            )
+            return True
+        finally:
+            if os.path.exists(tmpname):
+                try:
+                    os.remove(tmpname)
+                except OSError:
+                    pass
 
     def _flash_update_validate_package(self, firmware_dir: str):
         scatter = os.path.join(firmware_dir, "Scatter.xml")
@@ -1188,7 +1287,7 @@ class DAXML(metaclass=LogBase):
                 continue
             fields = {}
             for child in list(node):
-                fields[child.tag.split("}")[-1] = (child.text or "").strip()
+                fields[child.tag.split("}")[-1]] = (child.text or "").strip()
             name = fields.get("partition_name", "")
             filename = fields.get("file_name", "")
             is_download = fields.get("is_download", "").lower() == "true"
@@ -1291,7 +1390,7 @@ class DAXML(metaclass=LogBase):
                 self.info(
                     f'FLASH-UPDATE receiving "{result.info}" into {local_path}'
                 )
-                if not self.download_raw(
+                if not self._flash_update_receive_file(
                         result=result, filename=local_path, display=display):
                     self.error(
                         f'FLASH-UPDATE failed receiving "{result.target_file}"'
