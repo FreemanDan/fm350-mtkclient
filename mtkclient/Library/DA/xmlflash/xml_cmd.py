@@ -523,16 +523,17 @@ class XMLCmd(metaclass=LogBase):
         cmd = self.create_cmd("ERASE-FLASH", content)
         return cmd
 
-    def cmd_flash_update(self):
+    def cmd_flash_update(self, source_file: str = "D:/Scatter.xml",
+                         backup_folder: str = "D:/backup",
+                         path_separator: str = "/"):
         content = {
             "arg": [
-                "<path_separator>/</path_separator>",
-                "<source_file>D:/scatter.xml</source_file>",
-                "<backup_folder>D:/backup</backup_folder>"
+                f"<path_separator>{path_separator}</path_separator>",
+                f"<source_file>{source_file}</source_file>",
+                f"<backup_folder>{backup_folder}</backup_folder>"
             ]
         }
-        cmd = self.create_cmd("FLASH-UPDATE", content)
-        return cmd
+        return self.create_cmd("FLASH-UPDATE", content)
 
     def cmd_write_partitions(self, partitions):
         flashlist = ""
