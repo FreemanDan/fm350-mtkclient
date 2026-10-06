@@ -4,6 +4,7 @@
 import logging
 import os
 import sys
+import xml.etree.ElementTree as ET
 from struct import pack, unpack
 from queue import Queue
 from threading import Thread
@@ -998,6 +999,344 @@ class DAXML(metaclass=LogBase):
         else:
             self.error("Read flash isn't supported")
             sys.exit(1)
+
+    @staticmethod
+    def _flash_update_normalize_path(path: str) -> str:
+        path = (path or "").strip().strip('"').replace("\\", "/")
+        while "//" in path:
+            path = path.replace("//", "/")
+        return path
+
+    def _flash_update_resolve_path(self, da_path: str, firmware_dir: str,
+                                   backup_dir: str):
+        """Map a DA virtual path into one of the explicitly allowed host roots."""
+        norm = self._flash_update_normalize_path(da_path)
+        fw_root = os.path.realpath(firmware_dir)
+        backup_root = os.path.realpath(backup_dir)
+
+        def safe_join(root, rel):
+            rel = rel.lstrip("/")
+            candidate = os.path.realpath(os.path.join(root, rel))
+            try:
+                if os.path.commonpath([root, candidate]) != root:
+                    return None
+            except ValueError:
+                return None
+            return candidate
+
+        lower = norm.lower()
+        backup_prefixes = ("d:/backup", "./backup", "backup")
+        for prefix in backup_prefixes:
+            if lower == prefix or lower.startswith(prefix + "/"):
+                rel = norm[len(prefix):].lstrip("/")
+                return safe_join(backup_root, rel), "backup"
+
+        rel = norm
+        if len(rel) >= 3 and rel[1:3] == ":/":
+            rel = rel[3:]
+        elif rel.startswith("./"):
+            rel = rel[2:]
+
+        candidate = safe_join(fw_root, rel)
+        if candidate and os.path.exists(candidate):
+            return candidate, "source"
+
+        # DAs commonly normalize scatter.xml casing or prepend their virtual drive.
+        base = os.path.basename(rel)
+        if base:
+            direct = safe_join(fw_root, base)
+            if direct and os.path.exists(direct):
+                return direct, "source"
+            if base.lower() == "scatter.xml":
+                scatter = safe_join(fw_root, "Scatter.xml")
+                if scatter and os.path.exists(scatter):
+                    return scatter, "source"
+
+        return candidate, "source"
+
+    def _flash_update_send_file(self, result: DwnFile, filename: str,
+                                display: bool = True) -> bool:
+        """Serve one nested CMD:DOWNLOAD-FILE without consuming FLASH-UPDATE END/START."""
+        if not filename or not os.path.isfile(filename):
+            self.error(f"FLASH-UPDATE source file not found: {filename}")
+            return False
+
+        length = os.stat(filename).st_size
+        if length <= 0:
+            self.error(f"FLASH-UPDATE refuses zero-length source: {filename}")
+            return False
+
+        packet_length = int(result.packet_length)
+        if packet_length <= 0:
+            self.error(f"FLASH-UPDATE invalid packet length for {filename}: {packet_length}")
+            return False
+
+        self.info(
+            f'FLASH-UPDATE serving "{result.info}" from {filename} '
+            f'({length} bytes, packet=0x{packet_length:x})'
+        )
+
+        if not self.ack_value(length):
+            return False
+        if self.get_response() != "OK":
+            self.error(f"FLASH-UPDATE size ACK rejected for {filename}")
+            return False
+
+        pg = progress(total=length, prefix="Upload:",
+                      guiprogress=self.mtk.config.guiprogress)
+        sent = 0
+        with open(filename, "rb") as fh:
+            while sent < length:
+                chunk = fh.read(min(packet_length, length - sent))
+                if not chunk:
+                    self.error(
+                        f"FLASH-UPDATE short local read for {filename}: "
+                        f"{sent} of {length}"
+                    )
+                    return False
+
+                if not self.ack_value(0):
+                    return False
+                if "OK" not in self.get_response():
+                    self.error(
+                        f"FLASH-UPDATE device did not accept next block at 0x{sent:x}"
+                    )
+                    return False
+
+                if not self.xsend(chunk):
+                    self.error(f"FLASH-UPDATE USB send failed at 0x{sent:x}")
+                    return False
+                if "OK" not in self.get_response():
+                    self.error(
+                        f"FLASH-UPDATE device rejected block at 0x{sent:x}"
+                    )
+                    return False
+
+                sent += len(chunk)
+                if display:
+                    pg.update(len(chunk))
+
+        if display:
+            pg.done()
+        return sent == length
+
+    def _flash_update_handle_fsop(self, op: FileSysOp, firmware_dir: str,
+                                  backup_dir: str) -> bool:
+        key = (op.key or "").strip().upper()
+        local_path, kind = self._flash_update_resolve_path(
+            op.file_path, firmware_dir, backup_dir
+        )
+        self.info(
+            f'FLASH-UPDATE FS {key} "{op.file_path}" -> '
+            f'{local_path!r} ({kind})'
+        )
+
+        if key == "EXISTS":
+            exists = bool(local_path and os.path.exists(local_path))
+            return self.ack_text("EXISTS" if exists else "NOT-EXISTS")
+
+        if key == "FILE-SIZE":
+            if not local_path or not os.path.isfile(local_path):
+                self.error(
+                    f'FLASH-UPDATE FILE-SIZE requested for missing file "{op.file_path}"'
+                )
+                self.ack_value(0)
+                return False
+            return self.ack_value(os.stat(local_path).st_size)
+
+        if key == "MKDIR":
+            if kind != "backup" or not local_path:
+                self.error(
+                    f'FLASH-UPDATE refuses MKDIR outside backup root: "{op.file_path}"'
+                )
+                return False
+            os.makedirs(local_path, exist_ok=True)
+            return self.ack()
+
+        if key in ("REMOVE", "REMOVE-ALL"):
+            if kind != "backup" or not local_path:
+                self.error(
+                    f'FLASH-UPDATE refuses {key} outside backup root: "{op.file_path}"'
+                )
+                return False
+            if os.path.isdir(local_path):
+                import shutil
+                shutil.rmtree(local_path)
+            elif os.path.exists(local_path):
+                os.remove(local_path)
+            return self.ack()
+
+        self.error(f"FLASH-UPDATE unhandled FileSysOp key {key!r}")
+        return False
+
+    def _flash_update_validate_package(self, firmware_dir: str):
+        scatter = os.path.join(firmware_dir, "Scatter.xml")
+        if not os.path.isfile(scatter):
+            self.error(f"FLASH-UPDATE missing Scatter.xml: {scatter}")
+            return None
+
+        try:
+            root = ET.parse(scatter).getroot()
+        except Exception as err:
+            self.error(f"FLASH-UPDATE cannot parse Scatter.xml: {err}")
+            return None
+
+        downloadable = []
+        mcf3_download = None
+        for node in root.iter():
+            if node.tag.split("}")[-1] != "partition_index":
+                continue
+            fields = {}
+            for child in list(node):
+                fields[child.tag.split("}")[-1] = (child.text or "").strip()
+            name = fields.get("partition_name", "")
+            filename = fields.get("file_name", "")
+            is_download = fields.get("is_download", "").lower() == "true"
+            if name.lower() == "mcf3":
+                mcf3_download = is_download
+            if not is_download:
+                continue
+            if not filename:
+                self.error(f'FLASH-UPDATE {name}: download enabled but file_name is empty')
+                return None
+            local = os.path.join(firmware_dir, filename)
+            if not os.path.isfile(local):
+                self.error(f'FLASH-UPDATE {name}: source missing: {local}')
+                return None
+            try:
+                part_size = int(fields.get("partition_size", "0"), 0)
+            except ValueError:
+                part_size = 0
+            file_size = os.stat(local).st_size
+            if part_size and file_size > part_size:
+                self.error(
+                    f'FLASH-UPDATE {name}: {file_size} bytes exceeds '
+                    f'partition size {part_size}'
+                )
+                return None
+            downloadable.append((name, filename, file_size))
+
+        if mcf3_download:
+            self.error("FLASH-UPDATE refuses FM350 package with mcf3/DEV_OTA enabled")
+            return None
+        if not downloadable:
+            self.error("FLASH-UPDATE Scatter.xml has no downloadable partitions")
+            return None
+
+        return scatter, downloadable
+
+    def flash_update(self, firmware_dir: str, backup_dir: str,
+                     display: bool = True) -> bool:
+        """
+        Run stock XML-DA CMD:FLASH-UPDATE and act as its constrained host file service.
+
+        This intentionally does not use WRITE-PARTITION.  The DA owns erase/write,
+        protected-partition and update-policy decisions for the full transaction.
+        """
+        firmware_dir = os.path.realpath(firmware_dir)
+        backup_dir = os.path.realpath(backup_dir)
+
+        validated = self._flash_update_validate_package(firmware_dir)
+        if validated is None:
+            return False
+        scatter, downloadable = validated
+
+        os.makedirs(backup_dir, exist_ok=True)
+
+        self.info("FLASH-UPDATE package preflight:")
+        for name, filename, size in downloadable:
+            self.info(f"  {name:<14} {size:>10}  {filename}")
+        self.info(f"FLASH-UPDATE backup root: {backup_dir}")
+
+        if not self.send_command(
+                self.cmd.cmd_flash_update(
+                    source_file="D:/Scatter.xml",
+                    backup_folder="D:/backup",
+                    path_separator="/"
+                ),
+                noack=True):
+            self.error("FLASH-UPDATE command was rejected before file transfer")
+            return False
+
+        events = 0
+        while events < 10000:
+            events += 1
+            cmd, result = self.get_command_result()
+
+            if isinstance(result, DwnFile):
+                local_path, kind = self._flash_update_resolve_path(
+                    result.source_file, firmware_dir, backup_dir
+                )
+                if kind != "source" or not local_path or not os.path.isfile(local_path):
+                    self.error(
+                        f'FLASH-UPDATE requested unknown source "{result.source_file}"'
+                    )
+                    return False
+                if not self._flash_update_send_file(
+                        result, local_path, display=display):
+                    return False
+                continue
+
+            if isinstance(result, UpFile):
+                local_path, kind = self._flash_update_resolve_path(
+                    result.target_file, firmware_dir, backup_dir
+                )
+                if kind != "backup" or not local_path:
+                    self.error(
+                        f'FLASH-UPDATE refuses upload outside backup root: '
+                        f'"{result.target_file}"'
+                    )
+                    return False
+                os.makedirs(os.path.dirname(local_path), exist_ok=True)
+                self.info(
+                    f'FLASH-UPDATE receiving "{result.info}" into {local_path}'
+                )
+                if not self.download_raw(
+                        result=result, filename=local_path, display=display):
+                    self.error(
+                        f'FLASH-UPDATE failed receiving "{result.target_file}"'
+                    )
+                    return False
+                continue
+
+            if isinstance(result, FileSysOp):
+                if not self._flash_update_handle_fsop(
+                        result, firmware_dir, backup_dir):
+                    return False
+                continue
+
+            if cmd == "CMD:END":
+                self.ack()
+                if result != "OK":
+                    self.error(f"FLASH-UPDATE failed: {result}")
+                    # Best effort: consume CMD:START if the stock DA emits it.
+                    try:
+                        self.get_command_result()
+                    except Exception:
+                        pass
+                    return False
+
+                scmd, sresult = self.get_command_result()
+                if scmd == "CMD:START" and sresult == "START":
+                    self.info("FLASH-UPDATE completed successfully")
+                    return True
+                self.error(
+                    f"FLASH-UPDATE ended OK but no CMD:START "
+                    f"(cmd={scmd!r}, result={sresult!r})"
+                )
+                return False
+
+            if cmd == "CMD:START":
+                self.error("FLASH-UPDATE received unexpected early CMD:START")
+                return False
+
+            self.error(
+                f"FLASH-UPDATE unexpected event cmd={cmd!r}, result={result!r}"
+            )
+            return False
+
+        self.error("FLASH-UPDATE event limit exceeded")
+        return False
 
     def writeflash_by_name(self, partname: str, filename: str, display: bool = True) -> bool:
         """Write an exact file payload to a named partition via CMD:WRITE-PARTITION."""
