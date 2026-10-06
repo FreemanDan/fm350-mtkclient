@@ -350,6 +350,16 @@ class DAloader(metaclass=LogBase):
         self.error("writeflash_by_name not supported by current DA mode")
         return False
 
+    def flash_update(self, firmware_dir: str, backup_dir: str, display: bool = True):
+        if hasattr(self.da, "flash_update"):
+            return self.da.flash_update(
+                firmware_dir=firmware_dir,
+                backup_dir=backup_dir,
+                display=display
+            )
+        self.error("flash_update not supported by current DA mode")
+        return False
+
     def get_packet_length(self):
         if self.flashmode == DAmodes.XFLASH:
             pt = self.da.get_packet_length()
