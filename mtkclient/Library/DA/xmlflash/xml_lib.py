@@ -392,19 +392,24 @@ class DAXML(metaclass=LogBase):
                     data.extend(tmp)
                 self.ack()
                 return cmd, data
-        if cmd == "CMD:PROGRESS-REPORT":
-            """
-            <?xml version="1.0" encoding="utf-8"?><host><version>1.0</version>
-            <command>CMD:PROGRESS-REPORT</command>
-            <arg>
-                <message>init-hw</message>
-            </arg></host>
-            """
+        # A long-running XML command may emit several progress reports
+        # back-to-back (for example preloader -> misc -> para during
+        # CMD:FLASH-UPDATE).  Consume the whole run before returning the next
+        # actionable protocol event to the caller.
+        while cmd == "CMD:PROGRESS-REPORT":
+            message = get_field(data, "message")
+            if message:
+                self.info(f"DA progress: {message}")
             self.ack()
-            data = ""
-            while data != "OK!EOT":
-                data = self.get_response()
+
+            while True:
+                progress_data = self.get_response()
+                if progress_data.startswith("OK!PROGRESS@"):
+                    self.info(f"DA progress: {progress_data}")
                 self.ack()
+                if progress_data == "OK!EOT":
+                    break
+
             data = self.get_response()
             cmd = get_field(data, "command")
         if cmd == "CMD:START":
